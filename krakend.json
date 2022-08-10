@@ -1,0 +1,25 @@
+{
+    "version": 3,
+    "name": "krakend for FM",
+    "port": 8080,
+    "cache_ttl": "3600s",
+    "timeout": "2m",
+    "extra_config": {
+      "websocket": {
+        "port": "8087",
+        "websockets": [
+          {
+            "address": "ws://127.0.0.1:8083/web-socket/ssh",
+            "api": "/api1"
+          },
+          {
+            "address": "ws://127.0.0.1:8083/web-socket/ssh",
+            "api": "/api2"
+          }
+        ]
+      }
+    },
+    "endpoints": [
+    ]
+}
+
