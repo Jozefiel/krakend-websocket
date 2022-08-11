@@ -2,10 +2,11 @@ package websocket
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
+
+	// jose "github.com/devopsfaith/krakend-jose/v2"
 
 	"github.com/luraproject/lura/v2/config"
 	"github.com/luraproject/lura/v2/logging"
@@ -25,11 +26,10 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 		return ErrNoConfig
 	}
 
-	logger.Debug(logPrefix, cfg)
-
 	for _, element := range cfg.endpoints {
 		wp, err := websocketproxy.NewProxy(
-			element.address, func(r *http.Request) error {
+			element.address, element.jwk_url, element.aud, element.token_prefix, func(r *http.Request) error {
+
 				return nil
 			})
 		if err != nil {
@@ -38,14 +38,16 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 		http.HandleFunc(element.api, wp.Proxy)
 	}
 
-	// proxy path
-	http.HandleFunc("/hello", getHello)
-	log.Fatal(http.ListenAndServe(cfg.port, nil))
+	http.HandleFunc("/health", getHello)
 
+	go func() {
+		log.Fatal(http.ListenAndServe(cfg.port, nil))
+	}()
+
+	logger.Debug(logPrefix, "Service up and running")
 	return nil
 }
 
 func getHello(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("got /hello request\n")
-	io.WriteString(w, "Hello, HTTP!\n")
+	io.WriteString(w, "OK\n")
 }

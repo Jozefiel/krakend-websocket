@@ -21,6 +21,7 @@
 package websocketproxy
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -31,6 +32,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/coreos/go-oidc"
+	"github.com/golang-jwt/jwt"
 )
 
 const (
@@ -52,13 +57,21 @@ type WebsocketProxy struct {
 	logger      *log.Logger
 	// Send handshake before callback
 	beforeHandshake func(r *http.Request) error
+	// Auth
+	oidc OidcConfig
+}
+
+type OidcConfig struct {
+	jwk_url      string
+	aud          string
+	token_prefix string
 }
 
 type Options func(wp *WebsocketProxy)
 
 // You must carry a port number，ws://ip:80/ssss, wss://ip:443/aaaa
 // ex: ws://ip:port/ajaxchattest
-func NewProxy(addr string, beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
+func NewProxy(addr string, jwk_url string, aud string, token_prefix string, beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return nil, ErrFormatAddr
@@ -70,13 +83,27 @@ func NewProxy(addr string, beforeCallback func(r *http.Request) error, options .
 	if u.Scheme != WsScheme && u.Scheme != WssScheme {
 		return nil, ErrFormatAddr
 	}
+
+	oidc := OidcConfig{}
+	oidc.token_prefix = token_prefix
+
+	if len(jwk_url) > 0 {
+		oidc.jwk_url = jwk_url
+	}
+
+	if len(aud) > 0 {
+		oidc.aud = aud
+	}
+
 	wp := &WebsocketProxy{
 		scheme:          u.Scheme,
 		remoteAddr:      fmt.Sprintf("%s:%s", host, port),
 		defaultPath:     u.Path,
 		beforeHandshake: beforeCallback,
 		logger:          log.New(os.Stderr, "", log.LstdFlags),
+		oidc:            oidc,
 	}
+
 	if u.Scheme == WssScheme {
 		wp.tlsc = &tls.Config{InsecureSkipVerify: true}
 	}
@@ -90,14 +117,81 @@ func (wp *WebsocketProxy) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	wp.Proxy(writer, request)
 }
 
+func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, headers http.Header) error {
+	jwtToken, ok := headers["Authorization"]
+
+	if !ok {
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write([]byte("Missing authorization header"))
+		return errors.New("Missing authorization header")
+	}
+
+	idToken := strings.Join(jwtToken, " ")
+
+	if len(idToken) < len(wp.oidc.token_prefix) || !strings.HasPrefix(idToken, wp.oidc.token_prefix+" ") {
+		log.Println("Bad token prefix")
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write([]byte("Bad token prefix"))
+		return errors.New("Bad token prefix")
+	}
+
+	idToken = strings.ReplaceAll(idToken, " ", "")
+	idToken = idToken[utf8.RuneCountInString(wp.oidc.token_prefix):]
+
+	claims := jwt.MapClaims{}
+	jwt.ParseWithClaims(idToken, claims, nil)
+
+	// is that secure???
+	if len(wp.oidc.aud) == 0 {
+		wp.oidc.aud = claims["aud"].(string)
+	}
+
+	oidcConfig := oidc.Config{
+		ClientID: wp.oidc.aud,
+	}
+
+	ctx := context.Background()
+
+	provider, err := oidc.NewProvider(ctx, wp.oidc.jwk_url)
+	if err != nil {
+		log.Println(err)
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write([]byte("Bad token validator url"))
+		return errors.New("Bad token validator url")
+	}
+
+	verifier := provider.Verifier(&oidcConfig)
+
+	// is that enough???
+	_, err = verifier.Verify(ctx, idToken)
+	if err != nil {
+		log.Println(err)
+		writer.WriteHeader(http.StatusUnauthorized)
+		writer.Write([]byte("Bad token validator url"))
+		return errors.New("Bad token validator url")
+	}
+
+	return nil
+}
+
 func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Request) {
-	log.Println(request.Header)
+
+	// is that secure???
 	request.Header.Del("Origin")
-	if strings.ToLower(request.Header.Get("Connection")) != "upgrade" ||
+
+	if len(wp.oidc.jwk_url) > 0 {
+		err := wp.ValidateJWT(writer, request.Header)
+		if err != nil {
+			return
+		}
+	}
+
+	if !strings.Contains(strings.ToLower(request.Header.Get("Connection")), "upgrade") ||
 		strings.ToLower(request.Header.Get("Upgrade")) != "websocket" {
 		_, _ = writer.Write([]byte(`Must be a websocket request`))
 		return
 	}
+
 	hijacker, ok := writer.(http.Hijacker)
 	if !ok {
 		return
@@ -118,6 +212,7 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 	}
+
 	var remoteConn net.Conn
 	switch wp.scheme {
 	case WsScheme:

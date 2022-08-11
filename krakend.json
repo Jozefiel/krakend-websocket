@@ -6,7 +6,7 @@
     "timeout": "2m",
     "extra_config": {
       "websocket": {
-        "port": "8087",
+        "port": "8088",
         "websockets": [
           {
             "address": "ws://127.0.0.1:8083/web-socket/ssh",
@@ -14,7 +14,12 @@
           },
           {
             "address": "ws://127.0.0.1:8083/web-socket/ssh",
-            "api": "/api2"
+            "api": "/api2",
+            "jwk_url": "https://login.microsoftonline.com/06e51546-df15-4e3a-9534-f049820ab0c5/v2.0",
+            "audience": "366fab79-6c61-4a24-8c2c-b2be2f48fe35",
+            "token_prefix": "Bearer",
+            "rbac_headers": "", 
+            "rbac_roles": ""
           }
         ]
       }
@@ -22,4 +27,3 @@
     "endpoints": [
     ]
 }
-

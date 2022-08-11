@@ -9,8 +9,11 @@ import (
 )
 
 type websocketConfigEndpoints struct {
-	address string
-	api     string
+	address      string
+	api          string
+	jwk_url      string
+	aud          string
+	token_prefix string
 }
 
 type websocketConfig struct {
@@ -49,6 +52,20 @@ func parse_interface(t interface{}) ([]websocketConfigEndpoints, error) {
 				endpoint.api = value.(string)
 			} else {
 				return nil, errors.New("Bad endpoint api")
+			}
+
+			if value, ok := castedConfig["jwk_url"]; ok {
+				endpoint.jwk_url = value.(string)
+			}
+
+			if value, ok := castedConfig["audience"]; ok {
+				endpoint.aud = value.(string)
+			}
+
+			if value, ok := castedConfig["token_prefix"]; ok {
+				endpoint.token_prefix = value.(string)
+			} else {
+				endpoint.token_prefix = "Bearer"
 			}
 
 			endpoints = append(endpoints, endpoint)
