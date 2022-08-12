@@ -1,4 +1,4 @@
-package websocket
+package websocketproxy
 
 import (
 	"context"
@@ -6,11 +6,12 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/jozefiel/krakend-websocket/websocketproxy"
+
 	// jose "github.com/devopsfaith/krakend-jose/v2"
 
 	"github.com/luraproject/lura/v2/config"
 	"github.com/luraproject/lura/v2/logging"
-	"github.com/pretty66/websocketproxy"
 )
 
 const Namespace = "github.com/jozefiel/krakend-websocket"
