@@ -3,7 +3,6 @@ package websocketproxy
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -30,7 +29,6 @@ func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, request *http.
 	idToken := strings.Join(jwtToken, " ")
 
 	if len(idToken) < len(wp.oidc.tokenPrefix) || !strings.HasPrefix(idToken, wp.oidc.tokenPrefix+" ") {
-		log.Println("Bad token prefix")
 		writer.WriteHeader(http.StatusUnauthorized)
 		writer.Write([]byte("Bad token prefix"))
 		return errors.New("Bad token prefix")
@@ -55,7 +53,6 @@ func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, request *http.
 
 	provider, err := oidc.NewProvider(ctx, wp.oidc.jwkUrl)
 	if err != nil {
-		log.Println(err)
 		writer.WriteHeader(http.StatusUnauthorized)
 		writer.Write([]byte("Bad token validator url"))
 		return errors.New("Bad token validator url")
@@ -66,10 +63,10 @@ func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, request *http.
 	// is that enough???
 	_, err = verifier.Verify(ctx, idToken)
 	if err != nil {
-		log.Println(err)
+		wp.logger.Warning(logPrefix, err)
 		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write([]byte("Bad token validator url"))
-		return errors.New("Bad token validator url")
+		writer.Write([]byte("Validation of token failed"))
+		return errors.New("Validation of token failed")
 	}
 
 	wp.authHeaders(writer, request, claims)

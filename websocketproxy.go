@@ -14,7 +14,7 @@ import (
 )
 
 const Namespace = "github.com/jozefiel/krakend-websocket"
-const logPrefix = "[SERVICE: Websocket]"
+const logPrefix = "[SERVICE: Websocketproxy]"
 
 // New creates a new metrics producer
 func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Logger) error {
@@ -30,7 +30,8 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 
 	for _, element := range cfg.endpoints {
 		wp, err := websocketproxy.NewProxy(
-			element.address, element.jwk_url, element.aud, element.token_prefix, element.rbac_roles, func(r *http.Request) error {
+			element.address, element.jwk_url, element.aud, element.token_prefix, element.rbac_roles, logger,
+			func(r *http.Request) error {
 				return nil
 			})
 		if err != nil {

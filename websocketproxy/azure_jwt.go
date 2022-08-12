@@ -27,7 +27,7 @@ type AzureAdConfig struct {
 	groupMapping               GroupMapping
 }
 
-func azureInitConfig() AzureAdConfig {
+func (wp *WebsocketProxy) azureInitConfig() AzureAdConfig {
 
 	cfg := AzureAdConfig{}
 
@@ -43,7 +43,7 @@ func azureInitConfig() AzureAdConfig {
 		cfg.clientSecret = os.Getenv("AZURE_KRAKEND_PLUGIN_CLIENT_SECRET")
 
 		if len(cfg.clientId) == 0 || len(cfg.clientSecret) == 0 {
-			fmt.Fprintf(os.Stderr, "ERROR: Unable to retrieve plugin credentials: AZURE_KRAKEND_PLUGIN_CLIENT_ID or AZURE_KRAKEND_PLUGIN_CLIENT_SECRET missing \n")
+			wp.logger.Fatal(logPrefix, "Unable to retrieve plugin credentials: AZURE_KRAKEND_PLUGIN_CLIENT_ID or AZURE_KRAKEND_PLUGIN_CLIENT_SECRET missing \n")
 		}
 
 		// Define
@@ -55,12 +55,12 @@ func azureInitConfig() AzureAdConfig {
 
 			if err != nil {
 				cfg.groupUpdateIntervalMinutes = 120
-				fmt.Fprintf(os.Stderr, "ERROR: unable to convert group refresh interval, using default: %v minutes \n", groupUpdateIntervalMinutes)
+				wp.logger.Fatal(logPrefix, "Unable to convert group refresh interval, using default: %v minutes \n", groupUpdateIntervalMinutes)
 			}
 			cfg.groupUpdateIntervalMinutes = groupUpdateIntervalMinutes
 		}
 	} else {
-		fmt.Fprintf(os.Stdout, "INFO: group transformation is disabled")
+		wp.logger.Info(logPrefix, "Group transformation is disabled")
 	}
 
 	return cfg

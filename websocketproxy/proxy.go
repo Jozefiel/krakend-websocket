@@ -25,12 +25,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
+
+	"github.com/luraproject/lura/v2/logging"
 )
 
 const (
@@ -44,6 +44,8 @@ type key struct {
 
 var ErrFormatAddr = errors.New("remote websockets addr format error")
 
+const logPrefix = "[SERVICE: Websocketproxy]"
+
 type WebsocketProxy struct {
 	// ws, wss
 	scheme string
@@ -52,7 +54,7 @@ type WebsocketProxy struct {
 	// path
 	defaultPath string
 	tlsc        *tls.Config
-	logger      *log.Logger
+	logger      logging.Logger
 	// Send handshake before callback
 	beforeHandshake func(r *http.Request) error
 	// Auth
@@ -66,7 +68,9 @@ type Options func(wp *WebsocketProxy)
 
 // You must carry a port number，ws://ip:80/ssss, wss://ip:443/aaaa
 // ex: ws://ip:port/ajaxchattest
-func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRoles string, beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
+func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRoles string, logger logging.Logger,
+	beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
+
 	u, err := url.Parse(addr)
 	if err != nil {
 		return nil, ErrFormatAddr
@@ -84,7 +88,7 @@ func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRo
 		remoteAddr:      fmt.Sprintf("%s:%s", host, port),
 		defaultPath:     u.Path,
 		beforeHandshake: beforeCallback,
-		logger:          log.New(os.Stderr, "", log.LstdFlags),
+		logger:          logger,
 	}
 
 	wp.oidc.tokenPrefix = tokenPrefix
@@ -94,10 +98,10 @@ func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRo
 
 		switch {
 		case strings.Contains(wp.oidc.jwkUrl, "microsoft"):
-			wp.tokenTransConfig = azureInitConfig()
+			wp.tokenTransConfig = wp.azureInitConfig()
 
 		default:
-			wp.tokenTransConfig = azureInitConfig()
+			wp.tokenTransConfig = wp.azureInitConfig()
 		}
 	}
 
@@ -107,7 +111,6 @@ func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRo
 
 	if len(rbacRoles) > 0 {
 		wp.rbac.rbacRoles = rbacRoles
-		log.Println(wp.rbac.rbacRoles)
 	}
 
 	if u.Scheme == WssScheme {
@@ -137,12 +140,14 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	if len(wp.oidc.jwkUrl) > 0 {
 		err := wp.ValidateJWT(writer, request)
 		if err != nil {
+			wp.logger.Warning(logPrefix, "Jwt validation:", err)
 			return
 		}
 
 		if len(wp.rbac.rbacRoles) > 0 {
 			err := wp.checkRbacPermissions(writer, request)
 			if err != nil {
+				wp.logger.Warning(logPrefix, "Rbac validation:", err)
 				return
 			}
 		}
@@ -151,6 +156,7 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	if !strings.Contains(strings.ToLower(request.Header.Get("Connection")), "upgrade") ||
 		strings.ToLower(request.Header.Get("Upgrade")) != "websocket" {
 		_, _ = writer.Write([]byte(`Must be a websocket request`))
+		wp.logger.Warning(logPrefix, "Websocket headers: Must be a websocket request")
 		return
 	}
 
@@ -160,6 +166,7 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	}
 	conn, _, err := hijacker.Hijack()
 	if err != nil {
+		wp.logger.Warning(logPrefix, "Hijacker:", err)
 		return
 	}
 	defer conn.Close()
@@ -171,6 +178,7 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 		err = wp.beforeHandshake(req)
 		if err != nil {
 			_, _ = writer.Write([]byte(err.Error()))
+			wp.logger.Warning(logPrefix, "Before handshake:", err)
 			return
 		}
 	}
@@ -186,10 +194,12 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 		_, _ = writer.Write([]byte(err.Error()))
 		return
 	}
+	wp.logger.Info(logPrefix, "Websocketproxy connection established:", wp.remoteAddr)
+
 	defer remoteConn.Close()
 	err = req.Write(remoteConn)
 	if err != nil {
-		wp.logger.Println("remote write err:", err)
+		wp.logger.Warning(logPrefix, "Remote write err:", err)
 		return
 	}
 	errChan := make(chan error, 2)
@@ -204,7 +214,7 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	select {
 	case err = <-errChan:
 		if err != nil {
-			log.Println(err)
+			wp.logger.Warning(logPrefix, err)
 		}
 	}
 }
@@ -212,13 +222,5 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 func SetTLSConfig(tlsc *tls.Config) Options {
 	return func(wp *WebsocketProxy) {
 		wp.tlsc = tlsc
-	}
-}
-
-func SetLogger(l *log.Logger) Options {
-	return func(wp *WebsocketProxy) {
-		if l != nil {
-			wp.logger = l
-		}
 	}
 }
