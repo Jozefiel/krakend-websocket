@@ -21,7 +21,6 @@
 package websocketproxy
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -32,10 +31,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"unicode/utf8"
-
-	"github.com/coreos/go-oidc"
-	"github.com/golang-jwt/jwt"
 )
 
 const (
@@ -63,19 +58,15 @@ type WebsocketProxy struct {
 	// Auth
 	oidc             OidcConfig
 	tokenTransConfig interface{}
-}
-
-type OidcConfig struct {
-	jwk_url      string
-	aud          string
-	token_prefix string
+	// rbac
+	rbac RbacConfig
 }
 
 type Options func(wp *WebsocketProxy)
 
 // You must carry a port number，ws://ip:80/ssss, wss://ip:443/aaaa
 // ex: ws://ip:port/ajaxchattest
-func NewProxy(addr string, jwk_url string, aud string, token_prefix string, beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
+func NewProxy(addr string, jwkUrl string, aud string, tokenPrefix string, rbacRoles string, beforeCallback func(r *http.Request) error, options ...Options) (*WebsocketProxy, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return nil, ErrFormatAddr
@@ -96,13 +87,13 @@ func NewProxy(addr string, jwk_url string, aud string, token_prefix string, befo
 		logger:          log.New(os.Stderr, "", log.LstdFlags),
 	}
 
-	wp.oidc.token_prefix = token_prefix
+	wp.oidc.tokenPrefix = tokenPrefix
 
-	if len(jwk_url) > 0 {
-		wp.oidc.jwk_url = jwk_url
+	if len(jwkUrl) > 0 {
+		wp.oidc.jwkUrl = jwkUrl
 
 		switch {
-		case strings.Contains(wp.oidc.jwk_url, "microsoft"):
+		case strings.Contains(wp.oidc.jwkUrl, "microsoft"):
 			wp.tokenTransConfig = azureInitConfig()
 
 		default:
@@ -112,6 +103,11 @@ func NewProxy(addr string, jwk_url string, aud string, token_prefix string, befo
 
 	if len(aud) > 0 {
 		wp.oidc.aud = aud
+	}
+
+	if len(rbacRoles) > 0 {
+		wp.rbac.rbacRoles = rbacRoles
+		log.Println(wp.rbac.rbacRoles)
 	}
 
 	if u.Scheme == WssScheme {
@@ -127,65 +123,6 @@ func (wp *WebsocketProxy) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	wp.Proxy(writer, request)
 }
 
-func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, request *http.Request) error {
-	jwtToken, ok := request.Header["Authorization"]
-
-	if !ok {
-		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write([]byte("Missing authorization header"))
-		return errors.New("Missing authorization header")
-	}
-
-	idToken := strings.Join(jwtToken, " ")
-
-	if len(idToken) < len(wp.oidc.token_prefix) || !strings.HasPrefix(idToken, wp.oidc.token_prefix+" ") {
-		log.Println("Bad token prefix")
-		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write([]byte("Bad token prefix"))
-		return errors.New("Bad token prefix")
-	}
-
-	idToken = strings.ReplaceAll(idToken, " ", "")
-	idToken = idToken[utf8.RuneCountInString(wp.oidc.token_prefix):]
-
-	claims := jwt.MapClaims{}
-	jwt.ParseWithClaims(idToken, claims, nil)
-
-	// is that secure???
-	if len(wp.oidc.aud) == 0 {
-		wp.oidc.aud = claims["aud"].(string)
-	}
-
-	oidcConfig := oidc.Config{
-		ClientID: wp.oidc.aud,
-	}
-
-	ctx := context.Background()
-
-	provider, err := oidc.NewProvider(ctx, wp.oidc.jwk_url)
-	if err != nil {
-		log.Println(err)
-		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write([]byte("Bad token validator url"))
-		return errors.New("Bad token validator url")
-	}
-
-	verifier := provider.Verifier(&oidcConfig)
-
-	// is that enough???
-	_, err = verifier.Verify(ctx, idToken)
-	if err != nil {
-		log.Println(err)
-		writer.WriteHeader(http.StatusUnauthorized)
-		writer.Write([]byte("Bad token validator url"))
-		return errors.New("Bad token validator url")
-	}
-
-	wp.authHeaders(writer, request, claims)
-
-	return nil
-}
-
 func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Request) {
 
 	// is that secure???
@@ -197,10 +134,17 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	request.Header.Del("X-Auth-User-Groups")
 	request.Header.Del("From")
 
-	if len(wp.oidc.jwk_url) > 0 {
+	if len(wp.oidc.jwkUrl) > 0 {
 		err := wp.ValidateJWT(writer, request)
 		if err != nil {
 			return
+		}
+
+		if len(wp.rbac.rbacRoles) > 0 {
+			err := wp.checkRbacPermissions(writer, request)
+			if err != nil {
+				return
+			}
 		}
 	}
 

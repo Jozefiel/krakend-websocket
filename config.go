@@ -14,6 +14,7 @@ type websocketConfigEndpoints struct {
 	jwk_url      string
 	aud          string
 	token_prefix string
+	rbac_roles   string
 }
 
 type websocketConfig struct {
@@ -66,6 +67,10 @@ func parse_interface(t interface{}) ([]websocketConfigEndpoints, error) {
 				endpoint.token_prefix = value.(string)
 			} else {
 				endpoint.token_prefix = "Bearer"
+			}
+
+			if value, ok := castedConfig["rbac_roles"]; ok {
+				endpoint.rbac_roles = value.(string)
 			}
 
 			endpoints = append(endpoints, endpoint)

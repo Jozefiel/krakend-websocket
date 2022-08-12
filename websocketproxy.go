@@ -30,8 +30,7 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 
 	for _, element := range cfg.endpoints {
 		wp, err := websocketproxy.NewProxy(
-			element.address, element.jwk_url, element.aud, element.token_prefix, func(r *http.Request) error {
-
+			element.address, element.jwk_url, element.aud, element.token_prefix, element.rbac_roles, func(r *http.Request) error {
 				return nil
 			})
 		if err != nil {
