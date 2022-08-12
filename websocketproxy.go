@@ -26,6 +26,8 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 		return ErrNoConfig
 	}
 
+	mux := http.NewServeMux()
+
 	for _, element := range cfg.endpoints {
 		wp, err := websocketproxy.NewProxy(
 			element.address, element.jwk_url, element.aud, element.token_prefix, func(r *http.Request) error {
@@ -35,13 +37,13 @@ func New(ctx context.Context, extraConfig config.ExtraConfig, logger logging.Log
 		if err != nil {
 			log.Println(err)
 		}
-		http.HandleFunc(element.api, wp.Proxy)
+		mux.HandleFunc(element.api, wp.Proxy)
 	}
 
 	http.HandleFunc("/health", getHello)
 
 	go func() {
-		log.Fatal(http.ListenAndServe(cfg.port, nil))
+		log.Fatal(http.ListenAndServe(cfg.port, mux))
 	}()
 
 	logger.Debug(logPrefix, "Service up and running")

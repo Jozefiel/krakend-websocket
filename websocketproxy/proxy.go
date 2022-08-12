@@ -44,6 +44,9 @@ const (
 	BufSize   = 1024 * 32
 )
 
+type key struct {
+}
+
 var ErrFormatAddr = errors.New("remote websockets addr format error")
 
 type WebsocketProxy struct {
@@ -58,7 +61,8 @@ type WebsocketProxy struct {
 	// Send handshake before callback
 	beforeHandshake func(r *http.Request) error
 	// Auth
-	oidc OidcConfig
+	oidc             OidcConfig
+	tokenTransConfig interface{}
 }
 
 type OidcConfig struct {
@@ -84,24 +88,30 @@ func NewProxy(addr string, jwk_url string, aud string, token_prefix string, befo
 		return nil, ErrFormatAddr
 	}
 
-	oidc := OidcConfig{}
-	oidc.token_prefix = token_prefix
-
-	if len(jwk_url) > 0 {
-		oidc.jwk_url = jwk_url
-	}
-
-	if len(aud) > 0 {
-		oidc.aud = aud
-	}
-
 	wp := &WebsocketProxy{
 		scheme:          u.Scheme,
 		remoteAddr:      fmt.Sprintf("%s:%s", host, port),
 		defaultPath:     u.Path,
 		beforeHandshake: beforeCallback,
 		logger:          log.New(os.Stderr, "", log.LstdFlags),
-		oidc:            oidc,
+	}
+
+	wp.oidc.token_prefix = token_prefix
+
+	if len(jwk_url) > 0 {
+		wp.oidc.jwk_url = jwk_url
+
+		switch {
+		case strings.Contains(wp.oidc.jwk_url, "microsoft"):
+			wp.tokenTransConfig = azureInitConfig()
+
+		default:
+			wp.tokenTransConfig = azureInitConfig()
+		}
+	}
+
+	if len(aud) > 0 {
+		wp.oidc.aud = aud
 	}
 
 	if u.Scheme == WssScheme {
@@ -117,8 +127,8 @@ func (wp *WebsocketProxy) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	wp.Proxy(writer, request)
 }
 
-func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, headers http.Header) error {
-	jwtToken, ok := headers["Authorization"]
+func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, request *http.Request) error {
+	jwtToken, ok := request.Header["Authorization"]
 
 	if !ok {
 		writer.WriteHeader(http.StatusUnauthorized)
@@ -171,6 +181,8 @@ func (wp *WebsocketProxy) ValidateJWT(writer http.ResponseWriter, headers http.H
 		return errors.New("Bad token validator url")
 	}
 
+	wp.authHeaders(writer, request, claims)
+
 	return nil
 }
 
@@ -179,8 +191,14 @@ func (wp *WebsocketProxy) Proxy(writer http.ResponseWriter, request *http.Reques
 	// is that secure???
 	request.Header.Del("Origin")
 
+	// Remove RBAC headers forced in request, request must be obtained from JWT token
+	request.Header.Del("X-Tenant-Id")
+	request.Header.Del("X-Auth-User-Roles")
+	request.Header.Del("X-Auth-User-Groups")
+	request.Header.Del("From")
+
 	if len(wp.oidc.jwk_url) > 0 {
-		err := wp.ValidateJWT(writer, request.Header)
+		err := wp.ValidateJWT(writer, request)
 		if err != nil {
 			return
 		}
